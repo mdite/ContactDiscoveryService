@@ -1,22 +1,40 @@
-# Maven
-# Build your Java project and run tests with Apache Maven.
-# Add steps that analyze code, save build artifacts, deploy, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/java
+# Azure Pipelines set up to allow us to reuse a built enclave stored in git to test the CDS.
+name: test build without enclave rebuild
+pr:
+  branches:
+    include:
+      - master
 
 trigger:
-- master
+  branches:
+    include:
+      - master
+      - "test-svc-*"
+      - "test_svc_*"
 
-pool:
-  vmImage: ubuntu-latest
+resources:
+  containers:
+    - container: cds-jni-builder
+      image:     signalbackupci:cds-jni-builder
+      endpoint:  signalbackupci-container-registry
+      options:   --user 0:0 --device /dev/isgx
+      volumes:
+        - /var/run/aesmd/aesm.socket:/var/run/aesmd/aesm.socket
 
-steps:
-- task: Maven@3
-  inputs:
-    mavenPomFile: 'pom.xml'
-    mavenOptions: '-Xmx3072m'
-    javaHomeOption: 'JDKVersion'
-    jdkVersionOption: '1.8'
-    jdkArchitectureOption: 'x64'
-    publishJUnitResults: true
-    testResultsFiles: '**/surefire-reports/TEST-*.xml'
-    goals: 'package'
+stages:
+  - stage: docker_build_cds_jni_builder
+    displayName: docker build cds-jni-builder
+    jobs:
+      - template: jobs/docker_build_cds_jni_builder.yml
+
+  - stage: enclave_ffi_test
+    displayName: enclave-ffi-rust cargo tests
+    dependsOn: docker_build_cds_jni_builder
+    jobs:
+      - template: jobs/enclave_ffi_tests.yml
+
+  - stage: integration_test
+    displayName: integration tests
+    dependsOn: docker_build_cds_jni_builder
+    jobs:
+      - template: jobs/service_tests.yml
